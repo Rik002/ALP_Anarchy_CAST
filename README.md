@@ -311,5 +311,3 @@ Below is a summarized version of the header lines for each data file generated b
   ```
   log_g_e log_g_gamma W p_gg_0 ... p_gg_99 p_eg_0 ... p_eg_99 phi_osc_0 ... phi_osc_99 u_i0_gamma_0_0 u_i0_gamma_0_1 ... u_i0_gamma_99_0 u_i0_gamma_99_1 u_i0_e_0_0 u_i0_e_0_1 ... u_i0_e_99_0 u_i0_e_99_1
   ```
-
-You can add these to your `readme.md` under a section like "Output File Formats" to document the column structure of each data file. Let me know if you need help formatting them for the readme or if you want to verify specific values for `N_REALIZATIONS`, `G_GAMMA_POINTS`, or `MAX_N` from `constants.h`!
