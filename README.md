@@ -32,8 +32,8 @@ alp_anarchy_cast/
 ├── simulations/
 │   ├── main.cpp
 │   ├── main.py
-│   ├── data/ (output directory for C++ data files)
-│   └── plots/ (output directory for Python plots)
+├── data/ (output directory for C++ data files)
+├── plots/ (output directory for Python plots)
 ├── simulate (bash script)
 ├── plot (bash script)
 ├── info.md (this file)
