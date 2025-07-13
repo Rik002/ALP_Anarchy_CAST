@@ -1,5 +1,5 @@
 # ALP_Anarchy_CAST
-Simulation and analysis for the reinterpretation of CAST results. (Independent codebase based on ALP Anarchy by FrancescaChadha-Day et al) 
+Simulation and analysis for the reinterpretation of CAST results. (Independent codebase based on ALP Anarchy by FrancescaChadha-Day et al). This is still under development. Pipeline may work fully but results may not be represented satisfactorily.
 
 # ALP Anarchy CAST Simulation Pipeline
 
