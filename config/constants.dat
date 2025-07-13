@@ -1,0 +1,37 @@
+# ALP Anarchy CAST Simulation Pipeline Configuration
+# Format: key = value : Description, Units
+# Regions: Physical Constants, Simulation Parameters, Grid Resolution, Directory
+# Comments start with '#'
+
+[Constants]
+
+# Physical Constants
+# -----------------------
+G_GAMMA_N1         = 0.66e-10       : CAST single-ALP bound on photon coupling, GeV^-1
+G_GAMMA_G_E_LIMIT  = 8.1e-23        : Combined constraint on photon and electron couplings, GeV^-1
+PHI_P_COEFF        = 1.0e43         : Primakoff process flux coefficient, m^-2 year^-1 GeV^-2
+PHI_B_COEFF        = 4.1e46         : Bremsstrahlung process flux coefficient, m^-2 year^-1
+PHI_C_COEFF        = 5.2e45         : Compton process flux coefficient, m^-2 year^-1
+SOLAR_NU_LIMIT     = 7e-10          : Solar neutrino limit on g^gamma, GeV^-1
+# -----------------------
+
+# Simulation Parameters
+# -----------------------
+N_REALIZATIONS     = 100           : Number of random SO(N) matrix realizations per simulation point, None
+MAX_N              = 30             : Maximum number of Axion-Like Particles (ALPs), None
+# -----------------------
+
+# Grid Resolution
+# -----------------------
+G_E_LOG_MIN        = -15.0          : Minimum log10(g^e) for Figure 2 grid, None
+G_E_LOG_MAX        = -11.0          : Maximum log10(g^e) for Figure 2 grid, None
+G_GAMMA_LOG_MIN    = -11.0          : Minimum log10(g^gamma) for Figure 2 grid, None
+G_GAMMA_LOG_MAX    = -9.0           : Maximum log10(g^gamma) for Figure 2 grid, None
+G_E_POINTS_PER_DECADE = 10          : Number of g^e points per decade in log10 scale for Figure 2, None
+G_GAMMA_POINTS_PER_DECADE = 10      : Number of g^gamma points per decade in log10 scale for Figure 2, None
+# -----------------------
+
+# Directory
+# -----------------------
+DATA_DIR           = data/          : Directory for output data files, None
+# -----------------------
