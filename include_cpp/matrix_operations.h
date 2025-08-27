@@ -1,229 +1,250 @@
-#ifndef SIMULATIONS_H
-#define SIMULATIONS_H
+#ifndef MATRIX_OPERATIONS_H
+#define MATRIX_OPERATIONS_H
 
 #include "constants.h"
-#include "matrix_operations.h"
-#include "data_output.h"
+#include <Eigen/Dense>
 #include <vector>
-#include <string>
+#include <random>
 #include <functional>
-#include <memory>
+#include <string>
+#include <gsl/gsl_cdf.h>
+#include <gsl/gsl_statistics.h>
+#include <gsl/gsl_histogram.h>
 
-namespace Simulations {
+namespace MatrixOperations {
 
-// Enhanced result structures
-struct RealizationResult {
-    bool success; // bool
-    long double p_gg; // long double
-    long double p_eg; // long double
-    long double p_gg_prime; // long double
-    long double p_eg_prime; // long double
-    long double phi_osc; // long double
-    long double p_gg_p_value; // long double
-    long double p_eg_p_value; // long double
-    Eigen::VectorXd g_i_gamma; // Mass-basis gamma couplings
-    Eigen::VectorXd g_i_e; // Mass-basis electron couplings
-    long double det_err; // long double
-    long double orth_err; // long double
-    long double condition_number_gamma = 1.0L;
-    long double condition_number_e = 1.0L;
-    // Physics validation flags
-    bool physics_valid = false;
-    bool numerics_valid = false;
-    // Diagnostic information
-    std::string failure_reason;
+// Enhanced matrix generation methods
+enum class MatrixMethod {
+QR_APPROXIMATION, // Fast but approximate
+EXACT_HAAR, // Exact Haar measure (recommended)
+GIVENS_ROTATIONS, // Alternative exact method
+INDUCTIVE_CONSTRUCTION // Appendix A method
 };
 
-struct PointResult {
-    double weight = 0.0;
-    double p_gamma_mean = 0.0;
-    double p_gamma_std = 0.0;
-    double p_e_gamma_mean = 0.0;
-    double p_e_gamma_std = 0.0;
-    std::vector<long double> p_gamma_values;
-    std::vector<long double> p_e_gamma_values;
-    std::vector<long double> p_gamma_e_values; // Added for completeness
-    std::vector<long double> p_e_e_values; // Added for completeness
-    MatrixOperations::MatrixStatistics matrix_stats;
-    bool physics_validation_passed = false;
-    bool statistics_converged = false;
-    double validation_tolerance_used = 0.0;
-    // Enhanced diagnostics
-    int successful_realizations = 0;
-    int failed_realizations = 0;
-    std::vector<std::string> failure_reasons;
-};
+// Progress callback for batch operations
+using MatrixProgressCallback = std::function<void(int current, int total, double progress)>;
 
-struct SimulationResults {
-    std::vector<PointResult> figure2_results;
-    std::vector<PointResult> figure3_results;
-    MatrixOperations::MatrixStatistics overall_matrix_stats;
-    double total_computation_time = 0.0;
-    size_t peak_memory_usage = 0;
-    size_t total_realizations_computed = 0;
-    // Physics validation summary
-    struct PhysicsValidationSummary {
-        long double p_gamma_mean_N2 = 0.0;
-        long double p_e_gamma_mean_N2 = 0.0;
-        bool n2_validation_passed = false;
-        std::vector<double> large_n_relative_errors;
-        bool large_n_scaling_validated = false;
-        double ks_p_value_elements = 0.0;
-        bool haar_measure_validated = false;
-        double fit_quality_slope = 0.0;
-        double fit_quality_r_squared = 0.0;
-        bool scaling_law_validated = false;
-    } physics_summary;
-    // Performance metrics
-    struct PerformanceMetrics {
-        double realizations_per_second = 0.0;
-        double grid_points_per_second = 0.0;
-        double average_realization_time_ms = 0.0;
-        size_t memory_per_realization_bytes = 0;
-        int threads_used = 1;
-    } performance;
-};
+// Enhanced random number management
+class RandomNumberManager {
 
-enum class SimulationMode {
-    VALIDATION_ONLY,
-    FIGURE_2_ONLY,
-    FIGURE_3_ONLY,
-    CONVERGENCE_ANALYSIS,
-    FULL_ANALYSIS,
-    DIAGNOSTIC_ONLY
-};
-
-class SimulationController {
 private:
-    bool validation_enabled_ = true;
-    bool parallel_enabled_ = true;
-    bool memory_optimized_ = true;
-    bool detailed_logging_ = true;
-    size_t peak_memory_usage_ = 0;
-    SimulationResults results_;
-    std::function<void(const std::string&, int, int)> progress_callback_;
-    std::function<void(const std::string&, const std::string&)> log_callback_;
 
-    void initialize_results();
-    void finalize_results();
-    void setup_parallel_processing();
-    void update_progress(const std::string& stage, int current, int total);
-    void log_message(const std::string& level, const std::string& message);
-    // Memory management
-    void monitor_memory_usage();
-    void optimize_memory_usage();
+  static thread_local std::mt19937 generator;
+  static std::random_device rd;
 
 public:
-    SimulationController();
-    ~SimulationController();
-    // Configuration functions
-    void set_validation_mode(bool enabled) { validation_enabled_ = enabled; }
-    void set_parallel_mode(bool enabled) { parallel_enabled_ = enabled; }
-    void set_memory_optimization(bool enabled) { memory_optimized_ = enabled; }
-    void set_detailed_logging(bool enabled) { detailed_logging_ = enabled; }
-    void set_progress_callback(std::function<void(const std::string&, int, int)> callback) {
-        progress_callback_ = callback;
-    }
-    void set_log_callback(std::function<void(const std::string&, const std::string&)> callback) {
-        log_callback_ = callback;
-    }
-    // Main simulation functions
-    bool run_simulation(SimulationMode mode);
-    bool run_validation_tests();
-    bool generate_figure2_data(int N);
-    bool generate_figure3_data();
-    bool run_convergence_analysis();
-    bool run_diagnostic_suite();
-    // Results access
-    const SimulationResults& get_results() const { return results_; }
-    const MatrixOperations::MatrixStatistics& get_matrix_statistics() const { return results_.overall_matrix_stats; }
-    size_t get_peak_memory_usage() const { return peak_memory_usage_; }
-    // Enhanced analysis functions
-    void perform_simultaneous_statistics(int N, int n_realizations,
-                                        std::vector<long double>& p_gamma_values,
-                                        std::vector<long double>& p_e_gamma_values,
-                                        MatrixOperations::MatrixStatistics& matrix_stats);
-    bool validate_physics_expectations(int N, const std::vector<long double>& p_gamma_values,
-                                     const std::vector<long double>& p_e_gamma_values);
-    DataOutput::Figure3Data analyze_scaling_law(const std::vector<int>& N_values,
-                                               const std::vector<long double>& g_gamma_50_values);
+
+  static void seed(unsigned int s = 0);
+  static double uniform_real(double a = 0.0, double b = 1.0);
+  static double normal(double mean = 0.0, double std = 1.0);
+  static int uniform_int(int a, int b);
+  static double haar_angle(int dimension);
+  static std::vector<double> random_unit_vector(int N);
 };
 
-// Enhanced core simulation functions
-RealizationResult single_realization(int N, long double g_e, long double g_gamma, long double phi_max);
-PointResult calculate_single_point(int N, double g_e, double g_gamma, int n_realizations,
-                                  bool collect_statistics = false);
-std::vector<double> generate_log_grid(double min_val, double max_val, int points_per_decade);
+// CORRECTED matrix generation functions
 
-// MAIN SIMULATION FUNCTIONS - These are the core functions called from main()
-std::vector<std::vector<long double>> generate_figure_2(int N);
-std::vector<std::vector<long double>> generate_figure_3();
+Eigen::MatrixXd random_so_n(int N, MatrixMethod method = MatrixMethod::EXACT_HAAR);
+Eigen::MatrixXd generate_so_n_qr(int N);
+Eigen::MatrixXd generate_so_n_inductive(int N); // Exact Haar from Appendix A
+Eigen::MatrixXd generate_so_n_givens(int N);
 
-// MISSING FUNCTION DECLARATION - This was causing the compilation error!
-/**
- * @brief Generate convergence analysis for multiple N values
- * @return Combined convergence data for all N values across different realization counts
- */
-std::vector<std::vector<long double>> generate_convergence_analysis();
+// CORRECTED oscillation probability calculations (Equations 4.18 and 4.20)
 
-// DIAGNOSTIC FUNCTIONS
-std::vector<std::vector<long double>> diagnose_flux();
-std::vector<std::vector<long double>> diagnose_realization_data();
-std::vector<std::vector<long double>> diagnose_matrix_distribution(int N);
-std::vector<std::vector<long double>> generate_flux_comparison_data();
+long double calculate_p_gamma_gamma(const Eigen::VectorXd& g_i_gamma);
+long double calculate_p_e_gamma(const Eigen::VectorXd& g_i_e, const Eigen::VectorXd& g_i_gamma);
+long double calculate_p_gamma_e(const Eigen::VectorXd& g_i_gamma, const Eigen::VectorXd& g_i_e);
+long double calculate_p_e_e(const Eigen::VectorXd& g_i_e);
 
-// DEPRECATED FUNCTIONS - These may exist but are replaced by generate_convergence_analysis()
-std::vector<std::vector<long double>> generate_convergence_fig2();
-std::vector<std::vector<long double>> generate_convergence_fig3();
+// CORRECTED coupling generation (Equation 3.3)
 
-// Enhanced diagnostic functions
-bool validate_oscillation_probability_formulas();
-bool validate_coupling_generation_equations();
-bool validate_haar_measure_implementation();
-bool validate_numerical_stability();
+std::pair<Eigen::VectorXd, Eigen::VectorXd> generate_couplings(
 
-struct DiagnosticSummary {
-    bool oscillation_formulas_correct = false;
-    bool coupling_generation_correct = false;
-    bool haar_measure_correct = false;
-    bool numerical_stability_ok = false;
-    bool physics_validation_passed = false;
-    std::vector<std::string> errors_found;
-    std::vector<std::string> warnings_issued;
-    std::vector<std::string> recommendations;
-    double overall_quality_score = 0.0; // 0-1 score
+int N, long double g_gamma_total, long double g_e_total,
+
+const Eigen::MatrixXd& U_gamma, const Eigen::MatrixXd& U_e);
+
+// Enhanced matrix validation functions
+
+long double matrix_determinant_error(const Eigen::MatrixXd& matrix);
+long double matrix_orthogonality_error(const Eigen::MatrixXd& matrix);
+long double matrix_condition_number(const Eigen::MatrixXd& matrix);
+bool validate_so_n_matrix(const Eigen::MatrixXd& matrix, long double tolerance = Constants::MATRIX_TOLERANCE);
+
+// Advanced statistical analysis structures
+
+struct AdvancedStatistics {
+
+double mean = 0.0;
+double variance = 0.0;
+double std_dev = 0.0;
+double q25 = 0.0; // 25th percentile
+double median = 0.0; // 50th percentile
+double q75 = 0.0; // 75th percentile
+double iqr = 0.0; // Interquartile range
+double min_value = 0.0;
+double max_value = 0.0;
+double range = 0.0;
+double skewness = 0.0;
+double kurtosis = 0.0;
+double excess_kurtosis = 0.0;
+
+// Statistical tests
+
+double ks_statistic = 0.0;
+double ks_p_value = 0.0;
+bool ks_test_passed = false;
+double ad_statistic = 0.0;
+double ad_p_value = 0.0;
+bool ad_test_passed = false;
+
+// Theoretical comparisons
+
+double expected_mean = 0.0;
+double expected_std = 0.0;
+double mean_relative_error = 0.0;
+double std_relative_error = 0.0;
+
+// Outlier analysis
+
+std::vector<int> outlier_indices;
+int num_outliers = 0;
+double outlier_threshold = 3.0; // Standard deviations
+
 };
 
-DiagnosticSummary run_comprehensive_diagnostics();
+// Comprehensive matrix statistics structure
 
-// Additional data structures for enhanced functionality
-struct Figure2Data {
-    int N = 0;
-    int n_realizations = 0;
-    std::vector<long double> g_e_values;
-    std::vector<long double> g_gamma_values;
-    std::vector<std::vector<double>> weight_matrix; // [i][j]
-    std::vector<std::vector<double>> p_gamma_mean_matrix; // [i][j]
-    std::vector<std::vector<double>> p_gamma_std_matrix; // [i][j]
-    std::vector<std::vector<double>> p_e_gamma_mean_matrix; // [i][j]
-    std::vector<std::vector<double>> p_e_gamma_std_matrix; // [i][j]
-    // Raw data for detailed analysis
-    std::vector<std::vector<std::vector<long double>>> p_gamma_raw_data; // [i][j][realization]
-    std::vector<std::vector<std::vector<long double>>> p_e_gamma_raw_data; // [i][j][realization]
-    // Statistical test results
-    std::vector<std::vector<DataOutput::StatisticalTestResults>> p_gamma_stats_matrix; // [i][j]
-    std::vector<std::vector<DataOutput::StatisticalTestResults>> p_e_gamma_stats_matrix; // [i][j]
-    std::vector<std::vector<std::vector<long double>>> p_gamma_residuals; // [i][j][realization]
-    std::vector<std::vector<std::vector<long double>>> p_e_gamma_residuals; // [i][j][realization]
-    // Global statistics
-    DataOutput::StatisticalTestResults global_p_gamma_stats;
-    DataOutput::StatisticalTestResults global_p_e_gamma_stats;
-    double computation_time_seconds = 0.0;
-    size_t total_realizations_computed = 0;
-    std::vector<std::vector<std::vector<long double>>> w_residuals; // Added for W - 0.5 residuals
-    std::vector<std::vector<DataOutput::StatisticalTestResults>> w_stats_matrix; // Added for W Chi-Squared tests
+struct MatrixStatistics {
+
+// Raw data collections
+
+ std::vector<double> matrix_elements;
+ std::vector<double> diagonal_elements;
+ std::vector<double> off_diagonal_elements;
+ std::vector<double> first_row_elements;
+ std::vector<double> determinant_errors;
+ std::vector<double> orthogonality_errors;
+ std::vector<double> matrix_norms_frobenius;
+ std::vector<double> matrix_norms_spectral;
+ std::vector<double> condition_numbers;
+
+// Computed statistics
+
+AdvancedStatistics element_stats;
+AdvancedStatistics diagonal_stats;
+AdvancedStatistics off_diagonal_stats;
+AdvancedStatistics first_row_stats;
+AdvancedStatistics determinant_stats;
+AdvancedStatistics orthogonality_stats;
+
+// Matrix quality metrics
+
+double max_determinant_error = 0.0;
+double max_orthogonality_error = 0.0;
+int num_invalid_matrices = 0;
+double fraction_valid_matrices = 1.0;
+
+// Haar measure validation
+
+struct HaarValidation {
+bool elements_uniform = false;
+double element_ks_p_value = 0.0;
+bool first_row_uniform = false;
+double first_row_ks_p_value = 0.0;
+bool determinants_valid = false;
+bool orthogonality_valid = false;
+double haar_quality_score = 0.0;
+
+} haar_validation;
+
+// Physics validation
+
+struct PhysicsValidation {
+bool n2_case_validated = false;
+bool large_n_scaling = false;
+double theoretical_element_std = 0.0;
+double measured_element_std = 0.0;
+double scaling_relative_error = 0.0;
+bool coupling_conservation = false;
+double coupling_conservation_error = 0.0;
+
+} physics_validation;
+
+void clear();
+void compute_comprehensive_statistics(int N);
+void validate_haar_measure(int N);
+void validate_physics(int N, double expected_coupling_total_gamma = 0.0,
+double expected_coupling_total_e = 0.0);
+
 };
 
-} // namespace Simulations
+// Advanced statistical functions
 
-#endif // SIMULATIONS_H
+AdvancedStatistics compute_advanced_statistics(const std::vector<double>& data,
+const std::string& distribution_type = "normal",
+double expected_mean = 0.0,
+double expected_std = 1.0);
+
+// Statistical test functions
+
+std::pair<double, double> kolmogorov_smirnov_test(const std::vector<long double>& data, const std::string& distribution = "normal");
+double kolmogorov_smirnov_arcsine_test(const std::vector<double>& data); // New function for arcsine distribution
+double anderson_darling_test(const std::vector<double>& data, const std::string& distribution = "normal");
+std::pair<double, double> chi_square_gof_test(const std::vector<long double>& data, const std::string& distribution = "normal");
+
+// Physics validation functions
+
+bool validate_n2_case(const std::vector<double>& p_gamma_values,
+                      const std::vector<double>& p_e_gamma_values,
+                      double tolerance = Constants::PHYSICS_TOLERANCE_MEDIUM);
+bool validate_large_n_scaling(const std::vector<double>& p_gamma_values, int N,
+                               double tolerance = Constants::PHYSICS_TOLERANCE_LOOSE);
+bool validate_coupling_conservation(const Eigen::VectorXd& original_couplings,
+                                    const Eigen::VectorXd& generated_couplings,
+                                    double tolerance = Constants::PHYSICS_TOLERANCE_STRICT);
+
+// Utility functions for statistical analysis
+
+std::vector<double> compute_quantiles(std::vector<double> data,
+const std::vector<double>& percentiles);
+double compute_skewness(const std::vector<double>& data);
+double compute_kurtosis(const std::vector<double>& data);
+std::vector<int> detect_outliers(const std::vector<double>& data, double threshold = 3.0);
+
+// Batch processing functions for performance
+
+std::vector<Eigen::MatrixXd> generate_matrix_batch(int N, int count,
+                                                    MatrixMethod method = MatrixMethod::EXACT_HAAR,
+                                                    MatrixProgressCallback progress_cb = nullptr);
+MatrixStatistics analyze_matrix_batch(const std::vector<Eigen::MatrixXd>& matrices,
+                                      MatrixProgressCallback progress_cb = nullptr);
+
+// Thread-safe matrix generator for parallel processing
+
+class ThreadSafeMatrixGenerator {
+private:
+
+ MatrixMethod method_;
+ int batch_size_;
+
+public:
+
+  ThreadSafeMatrixGenerator(MatrixMethod method = MatrixMethod::EXACT_HAAR, int batch_size = 100);
+  std::vector<Eigen::MatrixXd> generate_batch(int N, int count);
+  Eigen::MatrixXd generate_single(int N);
+
+};
+
+// Legacy functions for compatibility
+
+long double p_gamma_gamma(const Eigen::VectorXd& g_i_gamma);
+long double p_e_gamma(const Eigen::VectorXd& g_i_e, const Eigen::VectorXd& g_i_gamma);
+
+// Added for oscillation condition
+
+inline double DELTA_M2_MIN = 1e-12;
+
+}
+
+#endif
