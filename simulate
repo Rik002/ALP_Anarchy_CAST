@@ -39,12 +39,12 @@ g_gamma_points=$(echo "$(grep '^G_GAMMA_POINTS_PER_DECADE' config/constants.dat 
 max_n=$(grep '^MAX_N' config/constants.dat | cut -d'=' -f2 | cut -d':' -f1 | xargs)
 echo "- Figure 2: $g_e_points g_e points"
 echo "           $g_gamma_points g_gamma points"
-echo "- Figure 3: 300 g_gamma points per N (2 to $max_n)"
+echo "- Figure 3: 10000 g_gamma points per N (2 to $max_n)"
 echo "-----------------------------------"
 
 # Compile C++ code
 echo "Compiling C++ simulation..."
-g++ -std=c++17 -Iinclude_cpp -I/home/rik/Cpp_Libraries/eigen-master/ -fopenmp src_cpp/*.cpp simulations/main.cpp -o simulations/simulate
+g++ -g -std=c++17 -fopenmp -DSUPPRESS_STAT_WARNINGS -Iinclude_cpp -I/home/rik/Cpp_Libraries/eigen-master/ src_cpp/*.cpp simulations/main.cpp -o simulations/simulate -lm -lgsl -lgslcblas
 if [ $? -ne 0 ]; then
     echo "Diagnostic: Compilation failed!"
     exit 1
@@ -65,14 +65,36 @@ echo "Now run ./plot"
 
 # Summarize output files
 echo -e "\nOutput Files Summary:"
-echo "+------------------------------------+--------+"
-echo "| File                               | Status |"
-echo "+------------------------------------+--------+"
-for file in data/*.txt; do
-    if [ -f "$file" ]; then
-        printf "| %-34s | %-6s |\n" "$(basename $file)" "Found"
-    else
-        printf "| %-34s | %-6s |\n" "$(basename $file)" "Missing"
+# Determine maximum lengths for formatting
+max_file_len=4  # Length of "File" header
+max_dir_len=9   # Length of "Directory" header
+while IFS= read -r file; do
+    if [ -n "$file" ] && [ -f "$file" ]; then
+        filename=$(basename "$file")
+        dirname=$(dirname "$file")
+        max_file_len=$(echo -e "$max_file_len\n${#filename}" | sort -nr | head -n1)
+        max_dir_len=$(echo -e "$max_dir_len\n${#dirname}" | sort -nr | head -n1)
     fi
-done
-echo "+------------------------------------+--------+"
+done < <(find "$data_dir" -type f -name "*.txt" 2>/dev/null)
+
+# Print table header
+echo "+$(printf '%*s' $max_file_len '' | tr ' ' '-')+$(printf '%*s' $max_dir_len '' | tr ' ' '-')+------------+"
+echo "| $(printf '%-*s' $max_file_len 'File') | $(printf '%-*s' $max_dir_len 'Directory') | Status |"
+echo "+$(printf '%*s' $max_file_len '' | tr ' ' '-')+$(printf '%*s' $max_dir_len '' | tr ' ' '-')+------------+"
+
+# Print table rows
+while IFS= read -r file; do
+    if [ -n "$file" ]; then
+        filename=$(basename "$file")
+        dirname=$(dirname "$file")
+        if [ -f "$file" ]; then
+            status="Found"
+        else
+            status="Missing"
+        fi
+        printf "| %-*s | %-*s | %-6s |\n" $max_file_len "$filename" $max_dir_len "$dirname" "$status"
+    fi
+done < <(find "$data_dir" -type f -name "*.txt" 2>/dev/null)
+
+# Print table footer
+echo "+$(printf '%*s' $max_file_len '' | tr ' ' '-')+$(printf '%*s' $max_dir_len '' | tr ' ' '-')+------------+"
