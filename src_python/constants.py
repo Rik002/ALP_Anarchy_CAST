@@ -44,7 +44,7 @@ def load_constants(filename="../config/constants.dat"):
 
     # Override DATA_DIR to point to main project data/ folder
     constants = {
-        'DATA_DIR': os.path.normpath('../data/'),
+        'DATA_DIR': os.path.normpath('./data/'),
         'N_REALIZATIONS': int(config['Constants']['N_REALIZATIONS']),
         'SOLAR_NU_LIMIT': float(config['Constants']['SOLAR_NU_LIMIT']),
         'MAX_N': int(config['Constants']['MAX_N']),
