@@ -17,18 +17,18 @@ SOLAR_NU_LIMIT     = 7e-10          : Solar neutrino limit on g^gamma, GeV^-1
 
 # Simulation Parameters
 # -----------------------
-N_REALIZATIONS     = 100           : Number of random SO(N) matrix realizations per simulation point, None
+N_REALIZATIONS     = 10000           : Number of random SO(N) matrix realizations per simulation point, None
 MAX_N              = 30             : Maximum number of Axion-Like Particles (ALPs), None
 # -----------------------
 
 # Grid Resolution
 # -----------------------
-G_E_LOG_MIN        = -15.0          : Minimum log10(g^e) for Figure 2 grid, None
-G_E_LOG_MAX        = -11.0          : Maximum log10(g^e) for Figure 2 grid, None
-G_GAMMA_LOG_MIN    = -11.0          : Minimum log10(g^gamma) for Figure 2 grid, None
-G_GAMMA_LOG_MAX    = -9.0           : Maximum log10(g^gamma) for Figure 2 grid, None
-G_E_POINTS_PER_DECADE = 10          : Number of g^e points per decade in log10 scale for Figure 2, None
-G_GAMMA_POINTS_PER_DECADE = 10      : Number of g^gamma points per decade in log10 scale for Figure 2, None
+G_E_LOG_MIN        = -15.5          : Minimum log10(g^e) for Figure 2 grid, None
+G_E_LOG_MAX        = -10.5          : Maximum log10(g^e) for Figure 2 grid, None
+G_GAMMA_LOG_MIN    = -12.0          : Minimum log10(g^gamma) for Figure 2 grid, None
+G_GAMMA_LOG_MAX    = -8.0           : Maximum log10(g^gamma) for Figure 2 grid, None
+G_E_POINTS_PER_DECADE = 1000          : Number of g^e points per decade in log10 scale for Figure 2, None
+G_GAMMA_POINTS_PER_DECADE = 1000      : Number of g^gamma points per decade in log10 scale for Figure 2, None
 # -----------------------
 
 # Directory
