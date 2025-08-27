@@ -51,7 +51,7 @@ echo "Diagnostic: Data files found in data/"
 echo "Checking Python dependencies..."
 if ! python3 -c "import numpy, scipy, matplotlib, tabulate, tqdm" 2>/dev/null; then
     echo "Installing required Python packages..."
-    pip install numpy scipy matplotlib tabulate tqdm
+    pip install numpy scipy matplotlib tabulate tqdm pandas
     if [ $? -ne 0 ]; then
         echo "Diagnostic: Failed to install Python packages!"
         exit 1
@@ -70,14 +70,14 @@ echo "Diagnostic: Plotting completed"
 
 # Summarize output files
 echo -e "\nOutput Files Summary:"
-echo "+------------------------------------+--------+"
-echo "| File                               | Status |"
-echo "+------------------------------------+--------+"
+echo "+----------------------------------------------------+--------+"
+echo "| File                                               | Status |"
+echo "+----------------------------------------------------+--------+"
 for file in plots/*.png; do
     if [ -f "$file" ]; then
-        printf "| %-34s | %-6s |\n" "$(basename $file)" "Found"
+        printf "| %-50s | %-8s |\n" "$(basename $file)" "Found"
     else
-        printf "| %-34s | %-6s |\n" "$(basename $file)" "Missing"
+        printf "| %-50s | %-8s |\n" "$(basename $file)" "Missing"
     fi
 done
-echo "+------------------------------------+--------+"
+echo "+----------------------------------------------------+--------+"
