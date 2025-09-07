@@ -279,33 +279,30 @@ namespace Simulations {
     std::tuple<double, double, double, double> fit_sigmoid(const std::vector<double>& x, const std::vector<double>& y) {
         if (x.size() != y.size() || x.size() < 4) {
             std::cerr << "[WARNING] Insufficient data for sigmoid fit. Using defaults." << std::endl;
-            return {1.0, -10.0, 10.0, 0.0};  // Fallback: Sharp transition at x0=-10
+            return {1.0, -10.0, 10.0, 0.0}; // Fallback: Sharp transition at x0=-10
         }
 
         const gsl_multifit_nlinear_type* T = gsl_multifit_nlinear_trust;
         gsl_multifit_nlinear_workspace* w;
         gsl_multifit_nlinear_fdf fdf;
         gsl_multifit_nlinear_parameters fdf_params = gsl_multifit_nlinear_default_parameters();
-
         const size_t n = x.size();
-        const size_t p = 4;  // Parameters: L, x0, k, b
-
+        const size_t p = 4; // Parameters: L, x0, k, b
         gsl_vector* f_vec = gsl_vector_alloc(n);
         gsl_matrix* J = gsl_matrix_alloc(n, p);
         gsl_matrix* cov = gsl_matrix_alloc(p, p);
         gsl_vector* params = gsl_vector_alloc(p);
 
-        // Initial guesses: L=1, x0=mean(x), k=1 (gentle), b=0
+        // Initial guesses: L=1, x0=mean(x), k=10.0 (steeper for sharp transitions), b=0
         double x_mean = std::accumulate(x.begin(), x.end(), 0.0) / n;
-        gsl_vector_set(params, 0, 1.0);
-        gsl_vector_set(params, 1, x_mean);
-        gsl_vector_set(params, 2, 1.0);
-        gsl_vector_set(params, 3, 0.0);
+        gsl_vector_set(params, 0, 1.0);  // L
+        gsl_vector_set(params, 1, x_mean);  // x0
+        gsl_vector_set(params, 2, 10.0);  // k (increased for better convergence on steep data)
+        gsl_vector_set(params, 3, 0.0);  // b
 
         std::pair<std::vector<double>*, std::vector<double>*> fit_data(const_cast<std::vector<double>*>(&x), const_cast<std::vector<double>*>(&y));
-
         fdf.f = sigmoid_func;
-        fdf.df = nullptr;  // Use finite differences
+        fdf.df = nullptr; // Use finite differences
         fdf.n = n;
         fdf.p = p;
         fdf.params = &fit_data;
@@ -314,23 +311,26 @@ namespace Simulations {
         int info;
         gsl_multifit_nlinear_init(params, &fdf, w);
 
-        int status = gsl_multifit_nlinear_driver(100, 1e-6, 1e-6, 1e-6, nullptr, nullptr, &info, w);
-
+        // Increased max iterations to 500 for better convergence
+        int status = gsl_multifit_nlinear_driver(500, 1e-6, 1e-6, 1e-6, nullptr, nullptr, &info, w);
 
         if (status != GSL_SUCCESS) {
-            std::cerr << "[WARNING] Sigmoid fit did not converge: " << gsl_strerror(status) << std::endl;
+            std::cerr << "[WARNING] Sigmoid fit did not converge: " << gsl_strerror(status) << ". Falling back to binary search initial guesses." << std::endl;
             gsl_multifit_nlinear_free(w);
             gsl_vector_free(f_vec);
             gsl_matrix_free(J);
             gsl_matrix_free(cov);
             gsl_vector_free(params);
-            return {1.0, x_mean, 1.0, 0.0};  // Fallback with initial guesses
+            return {1.0, x_mean, 10.0, 0.0}; // Fallback with adjusted initial guesses (including steeper k)
         }
 
         double L = gsl_vector_get(w->x, 0);
         double x0 = gsl_vector_get(w->x, 1);
         double k = gsl_vector_get(w->x, 2);
         double b = gsl_vector_get(w->x, 3);
+
+        // Logging sigmoid parameters after successful fit
+        std::cout << "\rSigmoid params: L=" << L << ", x0=" << x0 << ", k=" << k << ", b=" << b << std::flush;
 
         gsl_multifit_nlinear_free(w);
         gsl_vector_free(f_vec);
@@ -340,6 +340,7 @@ namespace Simulations {
 
         return {L, x0, k, b};
     }
+
 
 
 
@@ -403,459 +404,493 @@ namespace Simulations {
             };
             return result;
         }
-        // Enhanced Figure 3 Generation with Pre-computation and Statistical Outputs
-        std::vector<std::vector<long double>> generate_figure_3() {
-            std::cout << "\n" << std::string(60, '=') << std::endl;
-            std::cout << "ALP ANARCHY FIGURE 3: PHOTON COUPLING SCALING WITH N" << std::endl;
-            std::cout << std::string(60, '=') << std::endl;
 
-            // Configuration parameters
-            const long double G_E_FIXED = 1e-15L; // Fixed electron coupling
-            const int N_MIN = 2;
-            const int N_MAX = 30;
-            const long double G_GAMMA_LOG_MIN = Constants::G_GAMMA_LOG_MIN;
-            const long double G_GAMMA_LOG_MAX = Constants::G_GAMMA_LOG_MAX;
-            const long double TOLERANCE_W = 1e-10L; // Tolerance for W = 0.5
-            const long double TOLERANCE_G = 1e-13L; // Tolerance for g_gamma convergence
-            const int MAX_ITER = 10000; // Maximum binary search iterations
-            std::cout << "[CONFIG] Fixed g_e: " << std::scientific << std::setprecision(3) << G_E_FIXED << std::endl;
-            std::cout << "[CONFIG] N range: " << N_MIN << " to " << N_MAX << std::endl;
-            std::cout << "[CONFIG] g_gamma log range: [" << G_GAMMA_LOG_MIN << ", " << G_GAMMA_LOG_MAX << "]" << std::endl;
-            std::cout << "[CONFIG] Realizations per N: " << Constants::N_REALIZATIONS << std::endl;
 
-            std::string data_dir = Constants::DATA_DIR + "/data_fig3";
-            DataOutput::create_output_directory(data_dir);
+// Enhanced Figure 3 Generation with Grid-Based Multi-Method g₅₀γ Finding
+std::vector<std::vector<long double>> generate_figure_3() {
+    std::cout << "\n" << std::string(60, '=') << std::endl;
+    std::cout << "ALP ANARCHY FIGURE 3: PHOTON COUPLING SCALING WITH N" << std::endl;
+    std::cout << std::string(60, '=') << std::endl;
 
-            std::vector<std::vector<long double>> data;
-            std::stringstream header_ss;
-            header_ss << "N log_g_50gamma W P_gg_mean P_gg_std P_eg_mean P_eg_std";
+    // Configuration parameters
+    const long double G_E_FIXED = 1e-15L; // Fixed electron coupling
+    const int N_MIN = 2;
+    const int N_MAX = 30;
+    const long double G_GAMMA_LOG_MIN = -10.0L;//Constants::G_GAMMA_LOG_MIN;
+    const long double G_GAMMA_LOG_MAX = -9.65L;//Constants::G_GAMMA_LOG_MAX;
+    const int GRID_RESOLUTION = 100000; // High-resolution grid (increased from binary search iterations)
 
-            // Power-law fit data
-            std::vector<double> n_values, log_g_50gamma_values;
+    std::cout << "[CONFIG] Fixed g_e: " << std::scientific << std::setprecision(3) << G_E_FIXED << std::endl;
+    std::cout << "[CONFIG] N range: " << N_MIN << " to " << N_MAX << std::endl;
+    std::cout << "[CONFIG] g_gamma log range: [" << G_GAMMA_LOG_MIN << ", " << G_GAMMA_LOG_MAX << "]" << std::endl;
+    std::cout << "[CONFIG] Grid resolution: " << GRID_RESOLUTION << " points" << std::endl;
+    std::cout << "[CONFIG] Realizations per N: " << Constants::N_REALIZATIONS << std::endl;
 
-            // Store stats for each N to use in final loop
-            std::vector<std::pair<DataOutput::StatisticalTestResults, DataOutput::StatisticalTestResults>> stats_per_n;
+    std::string data_dir = Constants::DATA_DIR + "/data_fig3";
+    DataOutput::create_output_directory(data_dir);
 
-            EnhancedProgressBar n_progress("Figure 3 N Loop", true, true);
-            int total_n = N_MAX - N_MIN + 1;
-            int processed_n = 0;
+    std::vector<std::vector<long double>> data;
+    std::stringstream header_ss;
+    header_ss << "N log_g_50gamma W P_gg_mean P_gg_std P_eg_mean P_eg_std";
 
-            // Loop through each N
-            for (int N = N_MIN; N <= N_MAX; ++N) {
-                long double expected_p_gamma = (N == 2) ? 0.625 : 1.0 / N;
-                long double expected_p_e_gamma = (N == 2) ? 0.25 : 0.1;
-                long double tolerance = Constants::get_validation_tolerance(Constants::N_REALIZATIONS);
-                std::cout << "\n[PHYSICS] N = " << N << std::endl;
-                std::cout << " Expected P_gg: " << std::scientific << std::setprecision(3) << expected_p_gamma << std::endl;
-                std::cout << " Expected P_eg: " << std::scientific << std::setprecision(3) << expected_p_e_gamma << std::endl;
-                std::cout << " Validation tolerance: " << tolerance * 100 << "% (adaptive)" << std::endl;
+    // Power-law fit data
+    std::vector<double> n_values, log_g_50gamma_values;
 
-                // Step 1: Pre-compute Probability Distributions
-                std::string prob_file = data_dir + "/precomputed_probabilities_N" + std::to_string(N) + ".txt";
-                std::ofstream init_file(prob_file);
-                init_file << "# P_gg P_eg\n";
-                init_file.close();
+    // Store stats for each N
+    std::vector<std::pair<DataOutput::StatisticalTestResults, DataOutput::StatisticalTestResults>> stats_per_n;
 
-                EnhancedProgressBar sample_progress("Pre-computing Probabilities for N=" + std::to_string(N), true, true);
+    EnhancedProgressBar n_progress("Figure 3 N Loop", true, true);
+    int total_n = N_MAX - N_MIN + 1;
+    int processed_n = 0;
+
+    // Loop through each N
+    for (int N = N_MIN; N <= N_MAX; ++N) {
+        long double expected_p_gamma = (N == 2) ? 0.75 : 1.0 / N;
+        long double expected_p_e_gamma = (N == 2) ? 0.25 : 0.1;
+        long double tolerance = Constants::get_validation_tolerance(Constants::N_REALIZATIONS);
+
+        std::cout << "\n[PHYSICS] N = " << N << std::endl;
+        std::cout << " Expected P_gg: " << std::scientific << std::setprecision(3) << expected_p_gamma << std::endl;
+        std::cout << " Expected P_eg: " << std::scientific << std::setprecision(3) << expected_p_e_gamma << std::endl;
+        std::cout << " Validation tolerance: " << tolerance * 100 << "% (adaptive)" << std::endl;
+
+        // Step 1: Pre-compute Probability Distributions
+        std::string prob_file = data_dir + "/precomputed_probabilities_N" + std::to_string(N) + ".txt";
+        std::ofstream init_file(prob_file);
+        init_file << "# P_gg P_eg\n";
+        init_file.close();
+
+        EnhancedProgressBar sample_progress("Pre-computing Probabilities for N=" + std::to_string(N), true, true);
+
         #pragma omp parallel for
-                for (int real = 0; real < Constants::N_REALIZATIONS; ++real) {
-                    Eigen::MatrixXd U_gamma = MatrixOperations::random_so_n(N);
-                    Eigen::MatrixXd U_e = MatrixOperations::random_so_n(N);
-                    auto [g_i_gamma, g_i_e] = MatrixOperations::generate_couplings(N, 1.0L, 1.0L, U_gamma, U_e);
-                    long double p_gg = MatrixOperations::calculate_p_gamma_gamma(g_i_gamma);
-                    long double p_eg = MatrixOperations::calculate_p_e_gamma(g_i_e, g_i_gamma);
-        #pragma omp critical
-                    {
-                        std::ofstream file(prob_file, std::ios::app);
-                        if (file.is_open()) {
-                            file << std::setprecision(18) << p_gg << " " << p_eg << "\n";
-                            file.close();
-                        }
-                    }
-                    sample_progress.update(real + 1, Constants::N_REALIZATIONS);
-                }
-                sample_progress.finish("Probability distributions computed");
+        for (int real = 0; real < Constants::N_REALIZATIONS; ++real) {
+            Eigen::MatrixXd U_gamma = MatrixOperations::random_so_n(N);
+            Eigen::MatrixXd U_e = MatrixOperations::random_so_n(N);
+            auto [g_i_gamma, g_i_e] = MatrixOperations::generate_couplings(N, 1.0L, 1.0L, U_gamma, U_e);
+            long double p_gg = MatrixOperations::calculate_p_gamma_gamma(g_i_gamma);
+            long double p_eg = MatrixOperations::calculate_p_e_gamma(g_i_e, g_i_gamma);
 
-                // Step 2: Create CDF for P_gamma_gamma
-                std::vector<long double> p_gg_sorted;
-                p_gg_sorted.reserve(Constants::N_REALIZATIONS);
-                std::ifstream prob_in(prob_file);
-                if (!prob_in.is_open()) {
-                    std::cerr << "Error: Could not open file " << prob_file << std::endl;
-                    continue;
-                }
-                std::string line;
-                std::getline(prob_in, line); // Skip header
-                while (std::getline(prob_in, line)) {
-                    std::istringstream iss(line);
-                    long double p_gg, p_eg;
-                    if (iss >> p_gg >> p_eg) {
-                        p_gg_sorted.push_back(p_gg);
-                    }
-                }
-                prob_in.close();
-                std::sort(p_gg_sorted.begin(), p_gg_sorted.end());
-                auto cdf = [&](long double p_crit) -> long double {
-                    return static_cast<long double>(
-                        std::lower_bound(p_gg_sorted.begin(), p_gg_sorted.end(), p_crit) - p_gg_sorted.begin()
-                    ) / Constants::N_REALIZATIONS;
-                };
-
-                // Save CDF data
-                std::vector<std::vector<long double>> cdf_data = {{std::numeric_limits<long double>::quiet_NaN()}};
-                for (size_t i = 0; i < p_gg_sorted.size(); ++i) {
-                    cdf_data.push_back({p_gg_sorted[i], static_cast<long double>(i + 1) / Constants::N_REALIZATIONS});
-                }
-                DataOutput::write_diagnostics_realization_data(
-                    cdf_data,
-                    data_dir + "/cdf_p_gg_N" + std::to_string(N) + ".txt",
-                    "P_gg CDF"
-                );
-
-                // Step 3: Find g_50gamma using binary search
-                long double log_g_gamma_low = G_GAMMA_LOG_MIN;
-                long double log_g_gamma_high = G_GAMMA_LOG_MAX;
-                long double log_g_50gamma = 0.0L;
-                long double W = 0.0L;
-                const int M = 50; // Number of averages to reduce noise (tune based on runtime)
-                for (int iter = 0; iter < MAX_ITER && log_g_gamma_high - log_g_gamma_low > TOLERANCE_G; ++iter) {
-                    log_g_50gamma = (log_g_gamma_low + log_g_gamma_high) / 2.0L;
-                    long double g_gamma = std::pow(10.0L, log_g_50gamma);
-
-                    // Calculate fluxes (unchanged)
-                    long double phi_p_val = FluxCalculations::phi_p(g_gamma);
-                    long double phi_b_val = FluxCalculations::phi_b(G_E_FIXED);
-                    long double phi_c_val = FluxCalculations::phi_c(G_E_FIXED);
-                    long double phi_e = phi_b_val + phi_c_val;
-                    long double g_n1 = FluxCalculations::g_gamma_n1(G_E_FIXED);
-                    long double phi_max = FluxCalculations::phi_p(g_n1);
-                    if (g_gamma * g_gamma > 1e-50L) {
-                        phi_max = (phi_p_val + phi_b_val + phi_c_val) * (g_n1 * g_n1) / (g_gamma * g_gamma);
-                    }
-                    phi_max = std::max(static_cast<long double>(phi_max), 1e-50L);
-                    if (!std::isfinite(phi_max)) phi_max = 1e40L;
-
-                    // Compute averaged W to reduce noise
-                    long double W_avg = 0.0L;
-                    for (int avg = 0; avg < M; ++avg) { // Repeat for averaging
-                        long double W_temp = 0.0L;
-                        std::ifstream prob_in(prob_file); // Re-open file for each average
-                        if (!prob_in.is_open()) continue;
-                        std::string line;
-                        std::getline(prob_in, line); // Skip header
-                        #pragma omp parallel for reduction(+:W_temp)
-                        for (int k = 0; k < Constants::N_REALIZATIONS; ++k) {
-                            std::string data_line;
-                            #pragma omp critical
-                            if (std::getline(prob_in, data_line)) {
-                                std::istringstream iss(data_line);
-                                long double p_gg, p_eg;
-                                if (iss >> p_gg >> p_eg) {
-                                    long double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
-                                    long double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0L;
-                                    W_temp += eta;
-                                }
-                            }
-                        }
-                        prob_in.close();
-                        W_temp /= Constants::N_REALIZATIONS;
-                        W_avg += W_temp;
-                    }
-                    W = W_avg / M; // Averaged W
-
-                    // Adjust search range (unchanged)
-                    if (W > 0.5L + TOLERANCE_W) {
-                        log_g_gamma_low = log_g_50gamma;
-                    } else if (W < 0.5L - TOLERANCE_W) {
-                        log_g_gamma_high = log_g_50gamma;
-                    } else {
-                        break;
-                    }
-                }
-
-                // Step 3.5: Refine with sigmoid fit
-                std::vector<double> log_g_samples;
-                std::vector<double> W_samples;
-                int num_fit_points = 20; // Number of sampling points
-                double fit_range = 0.5; // +/- range in log space around current log_g_50gamma
-                for (int s = 0; s < num_fit_points; ++s) {
-                    double log_g_sample = log_g_50gamma - fit_range + (2 * fit_range * s / (num_fit_points - 1));
-                    double g_gamma_sample = std::pow(10.0, log_g_sample);
-
-                    // Recalculate fluxes (copy from binary loop)
-                    double phi_p_val = FluxCalculations::phi_p(g_gamma_sample);
-                    double phi_b_val = FluxCalculations::phi_b(G_E_FIXED);
-                    double phi_c_val = FluxCalculations::phi_c(G_E_FIXED);
-                    double phi_e = phi_b_val + phi_c_val;
-                    double g_n1 = FluxCalculations::g_gamma_n1(G_E_FIXED);
-                    double phi_max = FluxCalculations::phi_p(g_n1);
-                    if (g_gamma_sample * g_gamma_sample > 1e-50L) {
-                        phi_max = (phi_p_val + phi_b_val + phi_c_val) * (g_n1 * g_n1) / (g_gamma_sample * g_gamma_sample);
-                    }
-                    phi_max = std::max(static_cast<long double>(phi_max), 1e-50L);
-
-                    if (!std::isfinite(phi_max)) phi_max = 1e40L;
-
-                    // Compute W for this sample (average as in binary loop)
-                    double W_avg = 0.0;
-                    for (int avg = 0; avg < M; ++avg) { // Reuse M from binary loop
-                        double W_temp = 0.0;
-                        std::ifstream prob_in(prob_file);
-                        if (!prob_in.is_open()) continue;
-                        std::string line;
-                        std::getline(prob_in, line); // Skip header
-                        #pragma omp parallel for reduction(+:W_temp)
-                        for (int k = 0; k < Constants::N_REALIZATIONS; ++k) {
-                            std::string data_line;
-                            #pragma omp critical
-                            if (std::getline(prob_in, data_line)) {
-                                std::istringstream iss(data_line);
-                                long double p_gg, p_eg;
-                                if (iss >> p_gg >> p_eg) {
-                                    long double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
-                                    long double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0L;
-                                    W_temp += eta;
-                                }
-                            }
-                        }
-                        prob_in.close();
-                        W_temp /= Constants::N_REALIZATIONS;
-                        W_avg += W_temp;
-                    }
-                    double W_sample = W_avg / M;
-                    log_g_samples.push_back(log_g_sample);
-                    W_samples.push_back(W_sample);
-                }
-
-                // Perform fit
-                auto [L, x0, k, b] = fit_sigmoid(log_g_samples, W_samples);
-
-                // Refine log_g_50gamma: Solve for W = 0.5
-                // Formula: log_g = x0 - (1/k) * log( (L / (0.5 - b)) - 1 )
-                if (std::abs(k) > 1e-10 && (0.5 - b) > 0 && L > 0) {
-                    double arg = L / (0.5 - b) - 1.0;
-                    if (arg > 0) {
-                        log_g_50gamma = x0 - (1.0 / k) * std::log(arg);
-                    }
-                }  // Else fallback to binary search value
-
-                // Now proceed with refined log_g_50gamma
-                // Recompute final W with refined value (copy flux and W calc from binary loop)
-                double g_gamma = std::pow(10.0, log_g_50gamma);
-                double phi_p_val = FluxCalculations::phi_p(g_gamma);
-                double phi_b_val = FluxCalculations::phi_b(G_E_FIXED);
-                double phi_c_val = FluxCalculations::phi_c(G_E_FIXED);
-                double phi_e = phi_b_val + phi_c_val;
-                double g_n1 = FluxCalculations::g_gamma_n1(G_E_FIXED);
-                double phi_max = FluxCalculations::phi_p(g_n1);
-                if (g_gamma * g_gamma > 1e-50L) {
-                    phi_max = (phi_p_val + phi_b_val + phi_c_val) * (g_n1 * g_n1) / (g_gamma * g_gamma);
-                }
-                phi_max = std::max(static_cast<long double>(phi_max), 1e-50L);
-
-                if (!std::isfinite(phi_max)) phi_max = 1e40L;
-                double W_avg = 0.0;
-                for (int avg = 0; avg < M; ++avg) {
-                    double W_temp = 0.0;
-                    std::ifstream prob_in(prob_file);
-                    if (!prob_in.is_open()) continue;
-                    std::string line;
-                    std::getline(prob_in, line); // Skip header
-                    #pragma omp parallel for reduction(+:W_temp)
-                    for (int k = 0; k < Constants::N_REALIZATIONS; ++k) {
-                        std::string data_line;
-                        #pragma omp critical
-                        if (std::getline(prob_in, data_line)) {
-                            std::istringstream iss(data_line);
-                            long double p_gg, p_eg;
-                            if (iss >> p_gg >> p_eg) {
-                                long double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
-                                long double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0L;
-                                W_temp += eta;
-                            }
-                        }
-                    }
-                    prob_in.close();
-                    W_temp /= Constants::N_REALIZATIONS;
-                    W_avg += W_temp;
-                }
-                W = W_avg / M;
-
-                // Compute statistics using file data
-                std::vector<long double> p_gg_vals, p_eg_vals;
-                p_gg_vals.reserve(Constants::N_REALIZATIONS);
-                p_eg_vals.reserve(Constants::N_REALIZATIONS);
-                prob_in.open(prob_file);
-                if (prob_in.is_open()) {
-                    std::getline(prob_in, line); // Skip header
-                    while (std::getline(prob_in, line)) {
-                        std::istringstream iss(line);
-                        long double p_gg, p_eg;
-                        if (iss >> p_gg >> p_eg) {
-                            p_gg_vals.push_back(p_gg);
-                            p_eg_vals.push_back(p_eg);
-                        }
-                    }
-                    prob_in.close();
-                }
-
-                long double p_gg_mean = std::accumulate(p_gg_vals.begin(), p_gg_vals.end(), 0.0) / p_gg_vals.size();
-                long double p_eg_mean = std::accumulate(p_eg_vals.begin(), p_eg_vals.end(), 0.0) / p_eg_vals.size();
-                long double p_gg_var = 0.0, p_eg_var = 0.0;
-                if (p_gg_vals.size() > 1) {
-                    for (double p : p_gg_vals) p_gg_var += (p - p_gg_mean) * (p - p_gg_mean);
-                    for (double p : p_eg_vals) p_eg_var += (p - p_eg_mean) * (p - p_eg_mean);
-                    p_gg_var /= (p_gg_vals.size() - 1);
-                    p_eg_var /= (p_eg_vals.size() - 1);
-                }
-                long double p_gg_std = std::sqrt(p_gg_var);
-                long double p_eg_std = std::sqrt(p_eg_var);
-
-                // Perform statistical tests
-                DataOutput::StatisticalTestResults p_gg_stats, p_eg_stats;
-                auto [ks_stat_gg, ks_pval_gg] = MatrixOperations::kolmogorov_smirnov_test(p_gg_vals, "normal");
-                auto [chi2_stat_gg, chi2_pval_gg] = MatrixOperations::chi_square_gof_test(p_gg_vals, "normal");
-                p_gg_stats.ks_statistic = ks_stat_gg;
-                p_gg_stats.ks_p_value = ks_pval_gg; // Real value
-                p_gg_stats.chi2_statistic = chi2_stat_gg;
-                p_gg_stats.chi2_p_value = chi2_pval_gg; // Real value
-                p_gg_stats.sample_mean = p_gg_mean;
-                p_gg_stats.sample_std = p_gg_std;
-                p_gg_stats.expected_mean = expected_p_gamma;
-                p_gg_stats.expected_std = expected_p_gamma / std::sqrt(N);
-                p_gg_stats.sample_size = p_gg_vals.size();
-                p_gg_stats.validation_tolerance_used = tolerance;
-
-                // For p_eg_stats
-                auto [ks_stat_eg, ks_pval_eg] = MatrixOperations::kolmogorov_smirnov_test(p_eg_vals, "normal");
-                auto [chi2_stat_eg, chi2_pval_eg] = MatrixOperations::chi_square_gof_test(p_eg_vals, "normal");
-                p_eg_stats.ks_statistic = ks_stat_eg;
-                p_eg_stats.ks_p_value = ks_pval_eg; // Real value
-                p_eg_stats.chi2_statistic = chi2_stat_eg;
-                p_eg_stats.chi2_p_value = chi2_pval_eg; // Real value
-                p_eg_stats.sample_mean = p_eg_mean;
-                p_eg_stats.sample_std = p_eg_std;
-                p_eg_stats.expected_mean = expected_p_e_gamma;
-                p_eg_stats.expected_std = expected_p_e_gamma / std::sqrt(N);
-                p_eg_stats.sample_size = p_eg_vals.size();
-                p_eg_stats.validation_tolerance_used = tolerance;
-
-                // Store stats for later use
-                stats_per_n.push_back(std::make_pair(p_gg_stats, p_eg_stats));
-
-                // Store data
-                data.push_back({(long double)N, log_g_50gamma, W, (long double)p_gg_mean, (long double)p_gg_std, (long double)p_eg_mean, (long double)p_eg_std});
-                n_values.push_back(N);
-                log_g_50gamma_values.push_back(log_g_50gamma);
-
-                // Save statistical results
-                DataOutput::Figure3Data figure3_data;
-                figure3_data.N = N;
-                figure3_data.n_realizations = Constants::N_REALIZATIONS;
-                figure3_data.g_e_fixed = G_E_FIXED;
-                figure3_data.log_g_50gamma = log_g_50gamma;
-                figure3_data.W = W;
-                figure3_data.global_p_gamma_stats = p_gg_stats;
-                figure3_data.global_p_e_gamma_stats = p_eg_stats;
-                figure3_data.p_gamma_raw_data = p_gg_vals;
-                figure3_data.p_e_gamma_raw_data = p_eg_vals;
-
-                // Note: p_gamma_raw_data and p_e_gamma_raw_data are not stored in memory but will be read from file in write_figure3_stats
-                DataOutput::write_figure3_stats(figure3_data, data_dir + "/figure_3_stats_N" + std::to_string(N) + ".txt");
-
-                processed_n++;
-                std::ostringstream details_ss;
-                details_ss << "N=" << N << ", log_g_50gamma=" << std::fixed << std::setprecision(3) << log_g_50gamma << ", W=" << W;
-                n_progress.update(processed_n, total_n, details_ss.str());
-            }
-            n_progress.finish("N loop completed");
-
-            // Step 4: Fit Power-Law to g_50gamma vs N
-            std::vector<double> log_n_values(n_values.size());
-            for (size_t i = 0; i < n_values.size(); ++i) {
-                log_n_values[i] = std::log10(n_values[i]);
-            }
-
-            // Perform the fit using the corrected exponential function (handles pre-logged values and returns residuals)
-            auto [m, c, r2, residuals] = perform_exponential_fit(n_values, log_g_50gamma_values);
-            std::cout << "\n[POWER-LAW FIT] log10(g_50gamma) = " << std::fixed << std::setprecision(3) << m
-                      << " * log10(N) - " << std::fixed << std::setprecision(3) << c*std::log(10) << ", R² = " << r2 << std::endl;
-
-            // Save power-law fit parameters and residuals
-            std::vector<std::vector<long double>> fit_data = {{m, c, r2}};
-            DataOutput::write_diagnostics_realization_data(
-                fit_data,
-                data_dir + "/power_law_fit.txt",
-                "m c r_squared"
-            );
-
-            // Save residuals and fit predictions for plotting with safety checks
-            std::vector<std::vector<long double>> fit_plot_data;
-            fit_plot_data.reserve(n_values.size() + 1); // Pre-allocate for efficiency
-            fit_plot_data.push_back({std::numeric_limits<long double>::quiet_NaN()});
-            size_t valid_idx = 0;
-            for (size_t i = 0; i < n_values.size(); ++i) {
-                if (n_values[i] > 0 && std::isfinite(log_g_50gamma_values[i])) {
-                    if (valid_idx < residuals.size()) { // Safety check to prevent out-of-bounds
-                        long double predicted_log_g_50gamma = m * std::log10(n_values[i]) - c / std::log(10.0);
-                        fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], predicted_log_g_50gamma, residuals[valid_idx]});
-                        ++valid_idx;
-                    } else {
-                        fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], std::numeric_limits<long double>::quiet_NaN(), std::numeric_limits<long double>::quiet_NaN()});
-                    }
-                } else {
-                    fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], std::numeric_limits<long double>::quiet_NaN(), std::numeric_limits<long double>::quiet_NaN()});
+            #pragma omp critical
+            {
+                std::ofstream file(prob_file, std::ios::app);
+                if (file.is_open()) {
+                    file << std::setprecision(18) << p_gg << " " << p_eg << "\n";
+                    file.close();
                 }
             }
-            DataOutput::write_diagnostics_realization_data(
-                fit_plot_data,
-                data_dir + "/fit_plot_data.txt",
-                "N log_g_50gamma predicted_log_g_50gamma residual"
-            );
-
-            // Perform statistical tests on residuals
-            std::vector<long double> residuals_ld(residuals.begin(), residuals.end());
-            DataOutput::StatisticalTestResults residual_stats;
-            auto ks_result = MatrixOperations::kolmogorov_smirnov_test(residuals_ld, "normal");
-            residual_stats.ks_statistic = ks_result.first;
-            residual_stats.ks_p_value = ks_result.second;  // No longer placeholder
-
-            auto chi2_result = MatrixOperations::chi_square_gof_test(residuals_ld, "normal");
-            residual_stats.chi2_statistic = chi2_result.first;
-            residual_stats.chi2_p_value = chi2_result.second;  // No longer placeholder
-            residual_stats.sample_mean = std::accumulate(residuals.begin(), residuals.end(), 0.0) / residuals.size();
-            residual_stats.sample_std = residuals.size() > 1 ? std::sqrt(
-                std::accumulate(residuals.begin(), residuals.end(), 0.0,
-                    [mean = residual_stats.sample_mean](double sum, double x) { return sum + (x - mean) * (x - mean); }
-                ) / (residuals.size() - 1)) : 0.0;
-            residual_stats.sample_size = residuals.size();
-
-            // Write Figure 3 Data
-            DataOutput::write_figure_3_data(data, data_dir + "/figure_3.txt", header_ss.str());
-
-            // Print Statistical Table
-            std::vector<std::pair<std::string, DataOutput::StatisticalTestResults>> stat_results;
-            stat_results.push_back(std::make_pair("Fit Residuals", residual_stats));
-            for (int i = 0; i < stats_per_n.size(); ++i) {
-                int N = N_MIN + i;
-                stat_results.push_back(std::make_pair("P_gg (N=" + std::to_string(N) + ")", stats_per_n[i].first));
-                stat_results.push_back(std::make_pair("P_eg (N=" + std::to_string(N) + ")", stats_per_n[i].second));
-            }
-            DataOutput::print_statistical_table(stat_results, "Figure 3 Statistical Analysis");
-
-            std::vector<std::string> figure3_files;
-            for (int N = N_MIN; N <= N_MAX; ++N) {
-                figure3_files.push_back(data_dir + "/precomputed_probabilities_N" + std::to_string(N) + ".txt");
-                figure3_files.push_back(data_dir + "/cdf_p_gg_N" + std::to_string(N) + ".txt");
-                figure3_files.push_back(data_dir + "/figure_3_stats_N" + std::to_string(N) + ".txt");
-            }
-            figure3_files.push_back(data_dir + "/power_law_fit.txt");
-            figure3_files.push_back(data_dir + "/fit_plot_data.txt");
-            figure3_files.push_back(data_dir + "/figure_3.txt");
-            list_relevant_files(figure3_files, "Figure 3");
-
-            return data;
+            sample_progress.update(real + 1, Constants::N_REALIZATIONS);
         }
+
+        sample_progress.finish("Probability distributions computed");
+
+        // Load probabilities into memory
+        std::vector<long double> all_p_gg, all_p_eg;
+        all_p_gg.reserve(Constants::N_REALIZATIONS);
+        all_p_eg.reserve(Constants::N_REALIZATIONS);
+
+        std::ifstream prob_in(prob_file);
+        if (!prob_in.is_open()) {
+            std::cerr << "CRITICAL ERROR: Could not re-open pre-computation file " << prob_file << std::endl;
+            continue;
+        }
+
+        std::string line;
+        std::getline(prob_in, line); // Skip header
+        while (std::getline(prob_in, line)) {
+            std::istringstream iss(line);
+            long double p_gg, p_eg;
+            if (iss >> p_gg >> p_eg) {
+                all_p_gg.push_back(p_gg);
+                all_p_eg.push_back(p_eg);
+            }
+        }
+        prob_in.close();
+
+        // Create CDF for P_gamma_gamma
+        std::vector<long double> p_gg_sorted = all_p_gg;
+        std::sort(p_gg_sorted.begin(), p_gg_sorted.end());
+
+        auto cdf = [&](long double p_crit) -> long double {
+            return static_cast<long double>(
+                std::lower_bound(p_gg_sorted.begin(), p_gg_sorted.end(), p_crit) - p_gg_sorted.begin()
+            ) / Constants::N_REALIZATIONS;
+        };
+
+        // Save CDF data
+        std::vector<std::vector<long double>> cdf_data = {{std::numeric_limits<long double>::quiet_NaN()}};
+        for (size_t i = 0; i < p_gg_sorted.size(); ++i) {
+            cdf_data.push_back({p_gg_sorted[i], static_cast<long double>(i + 1) / Constants::N_REALIZATIONS});
+        }
+
+        DataOutput::write_diagnostics_realization_data(
+            cdf_data,
+            data_dir + "/cdf_p_gg_N" + std::to_string(N) + ".txt",
+            "P_gg CDF"
+        );
+
+        // Step 2: Grid-Based g₅₀γ Finding with Multiple Methods
+        EnhancedProgressBar grid_progress("Grid-Based g50gamma Finding", true, true);
+
+        const long double log_g_step = (G_GAMMA_LOG_MAX - G_GAMMA_LOG_MIN) / (GRID_RESOLUTION - 1);
+        std::vector<std::pair<long double, double>> grid_data;
+        grid_data.reserve(GRID_RESOLUTION);
+
+        // Function to calculate W for a given g_gamma
+        auto calculate_viability_fraction = [&](long double log_g_gamma) -> double {
+            long double g_gamma = std::pow(10.0L, log_g_gamma);
+
+            // Calculate fluxes using consistent CAST bound approach
+            long double phi_p_val = FluxCalculations::phi_p(g_gamma);
+            long double phi_b_val = FluxCalculations::phi_b(G_E_FIXED);
+            long double phi_c_val = FluxCalculations::phi_c(G_E_FIXED);
+            long double phi_e = 0.0L;// phi_b_val + phi_c_val;
+
+            // Use consistent CAST bound
+            long double g_n1=Constants::G_GAMMA_N1; //FluxCalculations::g_gamma_n1(G_E_FIXED);
+            long double integrated_phi_p_CAST = FluxCalculations::integrate_flux_gsl(g_n1, "phi_p");
+             long double integrated_phi_b_CAST = FluxCalculations::integrate_flux_gsl(G_E_FIXED, "phi_b");
+             long double integrated_phi_c_CAST = FluxCalculations::integrate_flux_gsl(G_E_FIXED, "phi_c");
+             long double phi_max = (integrated_phi_p_CAST) * (g_n1 * g_n1) / (g_gamma * g_gamma);;//(integrated_phi_p_CAST + integrated_phi_b_CAST + integrated_phi_c_CAST) * (g_n1 * g_n1) / (g_gamma * g_gamma);
+
+            // Calculate W using CDF method
+            double w_sum = 0.0;
+            #pragma omp parallel for reduction(+:w_sum)
+            for (size_t k = 0; k < all_p_gg.size(); ++k) {
+                long double p_gg = all_p_gg[k];
+                long double p_eg = all_p_eg[k];
+                long double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
+                long double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0L;
+                w_sum += eta;
+            }
+
+            return (all_p_gg.empty()) ? 0.0 : w_sum / all_p_gg.size();
+        };
+
+        // Calculate W for each grid point
+        for (int i = 0; i < GRID_RESOLUTION; ++i) {
+            long double log_g_gamma = G_GAMMA_LOG_MIN + i * log_g_step;
+            double W = calculate_viability_fraction(log_g_gamma);
+            grid_data.emplace_back(log_g_gamma, W);
+
+            grid_progress.update(i + 1, GRID_RESOLUTION);
+        }
+        grid_progress.finish("Grid calculation completed");
+
+        // Method 1: Zero-Crossing Detection (Most Robust)
+        auto find_zero_crossing = [](const std::vector<std::pair<long double, double>>& grid_data) -> long double {
+            for (size_t i = 1; i < grid_data.size(); ++i) {
+                double W_prev = grid_data[i-1].second;
+                double W_curr = grid_data[i].second;
+                long double log_g_prev = grid_data[i-1].first;
+                long double log_g_curr = grid_data[i].first;
+
+                if ((W_prev <= 0.5 && W_curr >= 0.5) || (W_prev >= 0.5 && W_curr <= 0.5)) {
+                    // Linear interpolation for precise crossing
+                    if (std::abs(W_curr - W_prev) < 1e-18) {
+                        return log_g_curr;
+                    }
+                    double t = (0.5 - W_prev) / (W_curr - W_prev);
+                    return log_g_prev + t * (log_g_curr - log_g_prev);
+                }
+            }
+            return grid_data[grid_data.size()/2].first; // Fallback to middle
+        };
+
+        // Method 2: Minimum Chi-Square Residual
+        auto find_minimum_chi2_residual = [](const std::vector<std::pair<long double, double>>& grid_data) -> long double {
+            long double min_chi2 = std::numeric_limits<long double>::max();
+            long double best_log_g = grid_data[0].first;
+
+            for (const auto& [log_g, W] : grid_data) {
+                double residual = W - 0.5;
+                long double chi2 = residual * residual;
+                if (chi2 < min_chi2) {
+                    min_chi2 = chi2;
+                    best_log_g = log_g;
+                }
+            }
+            return best_log_g;
+        };
+
+        // Method 3: Sigmoid Fit on Full Grid
+        auto fit_sigmoid_full_grid = [&](const std::vector<std::pair<long double, double>>& grid_data) -> long double {
+            std::vector<double> log_g_vals, W_vals;
+            for (const auto& [log_g, W] : grid_data) {
+                log_g_vals.push_back(log_g);
+                W_vals.push_back(W);
+            }
+
+            auto [L, x0, k, b] = fit_sigmoid(log_g_vals, W_vals);
+
+            // Solve for W = 0.5
+            if (std::abs(k) > 1e-10 && (0.5 - b) > 0 && L > 0) {
+                double arg = L / (0.5 - b) - 1.0;
+                if (arg > 0) {
+                    return x0 - (1.0 / k) * std::log(arg);
+                }
+            }
+
+            return find_zero_crossing(grid_data);  // Fallback
+        };
+
+        // Method 4: Steepest Gradient Detection
+        auto find_steepest_gradient = [](const std::vector<std::pair<long double, double>>& grid_data) -> long double {
+            long double max_gradient = 0.0L;
+            long double best_log_g = grid_data[0].first;
+
+            for (size_t i = 1; i < grid_data.size(); ++i) {
+                double dW = grid_data[i].second - grid_data[i-1].second;
+                long double d_log_g = grid_data[i].first - grid_data[i-1].first;
+
+                if (std::abs(d_log_g) > 1e-15) { // Avoid division by zero
+                    long double gradient = std::abs(dW / d_log_g);
+                    if (gradient > max_gradient) {
+                        max_gradient = gradient;
+                        best_log_g = (grid_data[i].first + grid_data[i-1].first) / 2.0L;
+                    }
+                }
+            }
+            return best_log_g;
+        };
+
+        // Apply all four methods
+        std::vector<long double> estimates;
+        estimates.push_back(find_zero_crossing(grid_data));
+        estimates.push_back(find_minimum_chi2_residual(grid_data));
+        estimates.push_back(fit_sigmoid_full_grid(grid_data));
+        estimates.push_back(find_steepest_gradient(grid_data));
+
+        // Robust Selection Algorithm
+        auto select_best_estimate = [](const std::vector<long double>& estimates) -> long double {
+            // Remove outliers using median-based filtering
+            std::vector<long double> sorted_estimates = estimates;
+            std::sort(sorted_estimates.begin(), sorted_estimates.end());
+            long double median = sorted_estimates[sorted_estimates.size()/2];
+
+            std::vector<long double> good_estimates;
+            for (long double est : estimates) {
+                if (std::abs(est - median) < 0.0001) {  // Within 0.0001 in log space
+                    good_estimates.push_back(est);
+                }
+            }
+
+            if (!good_estimates.empty()) {
+                // Return average of good estimates
+                long double sum = std::accumulate(good_estimates.begin(), good_estimates.end(), 0.0L);
+                return sum / good_estimates.size();
+            }
+
+            return estimates[0];  // Fallback to first method
+        };
+
+        long double log_g_50gamma = select_best_estimate(estimates);
+
+        // Calculate final W with refined log_g_50gamma
+        long double W = calculate_viability_fraction(log_g_50gamma);
+
+        std::cout << "\n[METHODS] g50gamma estimates:" << std::endl;
+        std::cout << " Zero-crossing: " << std::fixed << std::setprecision(6) << estimates[0] << std::endl;
+        std::cout << " Min chi-square: " << estimates[1] << std::endl;
+        std::cout << " Sigmoid fit: " << estimates[2] << std::endl;
+        std::cout << " Steepest gradient: " << estimates[3] << std::endl;
+        std::cout << " Final selected: " << log_g_50gamma << " (W = " << W << ")" << std::endl;
+
+        // Save grid data for analysis
+        std::vector<std::vector<long double>> grid_output_data = {{std::numeric_limits<long double>::quiet_NaN()}};
+        for (const auto& [log_g, W_val] : grid_data) {
+            grid_output_data.push_back({log_g, W_val});
+        }
+        DataOutput::write_diagnostics_realization_data(
+            grid_output_data,
+            data_dir + "/w_vs_g_gamma_N" + std::to_string(N) + ".txt",
+            "log_g_gamma W"
+        );
+
+        // Compute statistics (same as before)
+        std::vector<long double> p_gg_vals, p_eg_vals;
+        p_gg_vals.reserve(Constants::N_REALIZATIONS);
+        p_eg_vals.reserve(Constants::N_REALIZATIONS);
+
+        prob_in.open(prob_file);
+        if (prob_in.is_open()) {
+            std::getline(prob_in, line); // Skip header
+            while (std::getline(prob_in, line)) {
+                std::istringstream iss(line);
+                long double p_gg, p_eg;
+                if (iss >> p_gg >> p_eg) {
+                    p_gg_vals.push_back(p_gg);
+                    p_eg_vals.push_back(p_eg);
+                }
+            }
+            prob_in.close();
+        }
+
+        long double p_gg_mean = std::accumulate(p_gg_vals.begin(), p_gg_vals.end(), 0.0) / p_gg_vals.size();
+        long double p_eg_mean = std::accumulate(p_eg_vals.begin(), p_eg_vals.end(), 0.0) / p_eg_vals.size();
+
+        long double p_gg_var = 0.0, p_eg_var = 0.0;
+        if (p_gg_vals.size() > 1) {
+            for (double p : p_gg_vals) p_gg_var += (p - p_gg_mean) * (p - p_gg_mean);
+            for (double p : p_eg_vals) p_eg_var += (p - p_eg_mean) * (p - p_eg_mean);
+            p_gg_var /= (p_gg_vals.size() - 1);
+            p_eg_var /= (p_eg_vals.size() - 1);
+        }
+
+        long double p_gg_std = std::sqrt(p_gg_var);
+        long double p_eg_std = std::sqrt(p_eg_var);
+
+        // Statistical tests (same as before)
+        DataOutput::StatisticalTestResults p_gg_stats, p_eg_stats;
+        auto [ks_stat_gg, ks_pval_gg] = MatrixOperations::kolmogorov_smirnov_test(p_gg_vals, "normal");
+        auto [chi2_stat_gg, chi2_pval_gg] = MatrixOperations::chi_square_gof_test(p_gg_vals, "normal");
+
+        p_gg_stats.ks_statistic = ks_stat_gg;
+        p_gg_stats.ks_p_value = ks_pval_gg;
+        p_gg_stats.chi2_statistic = chi2_stat_gg;
+        p_gg_stats.chi2_p_value = chi2_pval_gg;
+        p_gg_stats.sample_mean = p_gg_mean;
+        p_gg_stats.sample_std = p_gg_std;
+        p_gg_stats.expected_mean = expected_p_gamma;
+        p_gg_stats.expected_std = expected_p_gamma / std::sqrt(N);
+        p_gg_stats.sample_size = p_gg_vals.size();
+        p_gg_stats.validation_tolerance_used = tolerance;
+
+        auto [ks_stat_eg, ks_pval_eg] = MatrixOperations::kolmogorov_smirnov_test(p_eg_vals, "normal");
+        auto [chi2_stat_eg, chi2_pval_eg] = MatrixOperations::chi_square_gof_test(p_eg_vals, "normal");
+
+        p_eg_stats.ks_statistic = ks_stat_eg;
+        p_eg_stats.ks_p_value = ks_pval_eg;
+        p_eg_stats.chi2_statistic = chi2_stat_eg;
+        p_eg_stats.chi2_p_value = chi2_pval_eg;
+        p_eg_stats.sample_mean = p_eg_mean;
+        p_eg_stats.sample_std = p_eg_std;
+        p_eg_stats.expected_mean = expected_p_e_gamma;
+        p_eg_stats.expected_std = expected_p_e_gamma / std::sqrt(N);
+        p_eg_stats.sample_size = p_eg_vals.size();
+        p_eg_stats.validation_tolerance_used = tolerance;
+
+        stats_per_n.push_back(std::make_pair(p_gg_stats, p_eg_stats));
+
+        // Store data
+        data.push_back({(long double)N, log_g_50gamma, W, (long double)p_gg_mean, (long double)p_gg_std, (long double)p_eg_mean, (long double)p_eg_std});
+        n_values.push_back(N);
+        log_g_50gamma_values.push_back(log_g_50gamma);
+
+        // Save statistical results
+        DataOutput::Figure3Data figure3_data;
+        figure3_data.N = N;
+        figure3_data.n_realizations = Constants::N_REALIZATIONS;
+        figure3_data.g_e_fixed = G_E_FIXED;
+        figure3_data.log_g_50gamma = log_g_50gamma;
+        figure3_data.W = W;
+        figure3_data.global_p_gamma_stats = p_gg_stats;
+        figure3_data.global_p_e_gamma_stats = p_eg_stats;
+        figure3_data.p_gamma_raw_data = p_gg_vals;
+        figure3_data.p_e_gamma_raw_data = p_eg_vals;
+
+        DataOutput::write_figure3_stats(figure3_data, data_dir + "/figure_3_stats_N" + std::to_string(N) + ".txt");
+
+        processed_n++;
+        std::ostringstream details_ss;
+        details_ss << "N=" << N << ", log_g_50gamma=" << std::fixed << std::setprecision(3) << log_g_50gamma << ", W=" << W;
+        n_progress.update(processed_n, total_n, details_ss.str());
+    }
+
+    n_progress.finish("N loop completed");
+
+    // Step 3: Fit Power-Law to g_50gamma vs N (same as before)
+    std::vector<double> log_n_values(n_values.size());
+    for (size_t i = 0; i < n_values.size(); ++i) {
+        log_n_values[i] = std::log10(n_values[i]);
+    }
+
+    auto [m, c, r2, residuals] = perform_exponential_fit(n_values, log_g_50gamma_values);
+
+    std::cout << "\n[POWER-LAW FIT] log10(g_50gamma) = " << std::fixed << std::setprecision(3) << m
+              << " * log10(N) - " << std::fixed << std::setprecision(3) << c*std::log(10) << ", R² = " << r2 << std::endl;
+
+    // Save power-law fit parameters and residuals
+    std::vector<std::vector<long double>> fit_data = {{m, c, r2}};
+    DataOutput::write_diagnostics_realization_data(
+        fit_data,
+        data_dir + "/power_law_fit.txt",
+        "m c r_squared"
+    );
+
+    // Save residuals and fit predictions for plotting with safety checks
+    std::vector<std::vector<long double>> fit_plot_data;
+    fit_plot_data.reserve(n_values.size() + 1);
+    fit_plot_data.push_back({std::numeric_limits<long double>::quiet_NaN()});
+
+    size_t valid_idx = 0;
+    for (size_t i = 0; i < n_values.size(); ++i) {
+        if (n_values[i] > 0 && std::isfinite(log_g_50gamma_values[i])) {
+            if (valid_idx < residuals.size()) {
+                long double predicted_log_g_50gamma = m * std::log10(n_values[i]) - c / std::log(10.0);
+                fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], predicted_log_g_50gamma, residuals[valid_idx]});
+                ++valid_idx;
+            } else {
+                fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], std::numeric_limits<long double>::quiet_NaN(), std::numeric_limits<long double>::quiet_NaN()});
+            }
+        } else {
+            fit_plot_data.push_back({n_values[i], log_g_50gamma_values[i], std::numeric_limits<long double>::quiet_NaN(), std::numeric_limits<long double>::quiet_NaN()});
+        }
+    }
+
+    DataOutput::write_diagnostics_realization_data(
+        fit_plot_data,
+        data_dir + "/fit_plot_data.txt",
+        "N log_g_50gamma predicted_log_g_50gamma residual"
+    );
+
+    // Perform statistical tests on residuals
+    std::vector<long double> residuals_ld(residuals.begin(), residuals.end());
+    DataOutput::StatisticalTestResults residual_stats;
+    auto ks_result = MatrixOperations::kolmogorov_smirnov_test(residuals_ld, "normal");
+    residual_stats.ks_statistic = ks_result.first;
+    residual_stats.ks_p_value = ks_result.second;
+
+    auto chi2_result = MatrixOperations::chi_square_gof_test(residuals_ld, "normal");
+    residual_stats.chi2_statistic = chi2_result.first;
+    residual_stats.chi2_p_value = chi2_result.second;
+
+    residual_stats.sample_mean = std::accumulate(residuals.begin(), residuals.end(), 0.0) / residuals.size();
+    residual_stats.sample_std = residuals.size() > 1 ? std::sqrt(
+        std::accumulate(residuals.begin(), residuals.end(), 0.0,
+            [mean = residual_stats.sample_mean](double sum, double x) { return sum + (x - mean) * (x - mean); }
+        ) / (residuals.size() - 1)) : 0.0;
+    residual_stats.sample_size = residuals.size();
+
+    // Write Figure 3 Data
+    DataOutput::write_figure_3_data(data, data_dir + "/figure_3.txt", header_ss.str());
+
+    // Print Statistical Table
+    std::vector<std::pair<std::string, DataOutput::StatisticalTestResults>> stat_results;
+    stat_results.push_back(std::make_pair("Fit Residuals", residual_stats));
+    for (size_t i = 0; i < stats_per_n.size(); ++i) {
+        int N = N_MIN + i;
+        stat_results.push_back(std::make_pair("P_gg (N=" + std::to_string(N) + ")", stats_per_n[i].first));
+        stat_results.push_back(std::make_pair("P_eg (N=" + std::to_string(N) + ")", stats_per_n[i].second));
+    }
+
+    DataOutput::print_statistical_table(stat_results, "Figure 3 Statistical Analysis");
+
+    std::vector<std::string> figure3_files;
+    for (int N = N_MIN; N <= N_MAX; ++N) {
+        figure3_files.push_back(data_dir + "/precomputed_probabilities_N" + std::to_string(N) + ".txt");
+        figure3_files.push_back(data_dir + "/cdf_p_gg_N" + std::to_string(N) + ".txt");
+        figure3_files.push_back(data_dir + "/w_vs_g_gamma_N" + std::to_string(N) + ".txt");
+        figure3_files.push_back(data_dir + "/figure_3_stats_N" + std::to_string(N) + ".txt");
+    }
+
+    figure3_files.push_back(data_dir + "/power_law_fit.txt");
+    figure3_files.push_back(data_dir + "/fit_plot_data.txt");
+    figure3_files.push_back(data_dir + "/figure_3.txt");
+
+    list_relevant_files(figure3_files, "Figure 3");
+
+    return data;
+}
 
 
             // Figure 2 Generation
@@ -1037,7 +1072,7 @@ namespace Simulations {
                 // Step 3: Calculate Viability for Each Grid Point (parallel, no file I/O)
                 EnhancedProgressBar grid_progress("Figure 2 Grid Generation", true, true);
                 int processed = 0;
-                const int M = 50;  // Averages per grid point (tune for noise vs. speed; e.g., 5-20)
+                //const int M = 10;  // Averages per grid point (tune for noise vs. speed; e.g., 5-20)
                 std::vector<std::vector<long double>> refined_boundaries(g_e_steps);
 
                 #pragma omp parallel for collapse(2) schedule(dynamic) if(total_steps > 100)
@@ -1059,42 +1094,40 @@ namespace Simulations {
                         long double phi_p_val = FluxCalculations::phi_p(g_gamma);
                         long double phi_b_val = FluxCalculations::phi_b(g_e);
                         long double phi_c_val = FluxCalculations::phi_c(g_e);
-                        long double phi_e = phi_b_val + phi_c_val;
+                        long double phi_e = 0.0L;
+                        if(log10(g_e) <= -13) phi_e = 0.0L;
+                        else if (log10(g_e) > -13)
+                            phi_e = phi_b_val + phi_c_val;
 
-                        // Calculate phi_max based on CAST bound
+
+                        // Calculate phi_max using the CAST bound approach
                         long double g_n1 = FluxCalculations::g_gamma_n1(g_e);
-                        long double flux_total_single = phi_p_val + phi_b_val + phi_c_val;
-                        long double phi_max = flux_total_single;
-                        if (g_gamma * g_gamma > 1e-50L) {
-                            phi_max = flux_total_single * (g_n1 * g_n1) / (g_gamma * g_gamma);
-                        }
-                        phi_max = std::max(phi_max, 1e-50L);
-                        if (!std::isfinite(phi_max)) phi_max = 1e40L;
+                        long double integrated_phi_p_CAST = FluxCalculations::integrate_flux_gsl(g_n1, "phi_p");
+                        long double integrated_phi_b_CAST = FluxCalculations::integrate_flux_gsl(g_e, "phi_b");
+                        long double integrated_phi_c_CAST = FluxCalculations::integrate_flux_gsl(g_e, "phi_c");
+                        long double phi_max = (integrated_phi_p_CAST + integrated_phi_b_CAST + integrated_phi_c_CAST) * (g_n1 * g_n1) / (g_gamma * g_gamma);
 
-                        // Compute averaged W and stats to reduce noise
-                        double w_sum_avg = 0.0;
-                        double w_sum_sq_avg = 0.0;
-                        for (int avg = 0; avg < M; ++avg) {  // Average over M estimates
-                            double w_sum = 0.0;
-                            double w_sum_sq = 0.0;
-                            size_t valid_count = 0;
-                            for (size_t k = 0; k < all_p_gg.size(); ++k) {
-                                double p_gg = all_p_gg[k];
-                                double p_eg = all_p_eg[k];
-                                double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
-                                double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0;
-                                w_sum += eta;
-                                w_sum_sq += eta * eta;
-                                ++valid_count;
-                            }
-                            double W_temp = (valid_count > 0) ? w_sum / valid_count : 0.0;
-                            w_sum_avg += W_temp;
-                            w_sum_sq_avg += (valid_count > 1) ? (w_sum_sq - (w_sum * w_sum / valid_count)) / (valid_count - 1) : 0.0;
+                        // Use CDF-based viability calculation
+                        double w_sum = 0.0;
+
+                        #pragma omp parallel for reduction(+:w_sum)
+                        for (size_t k = 0; k < all_p_gg.size(); ++k) {
+                            double p_gg = all_p_gg[k];
+                            double p_eg = all_p_eg[k];
+
+                            // Calculate p_crit for this realization
+                            double p_crit = (phi_max - p_eg * phi_e) / phi_p_val;
+                            double eta = (p_crit > 0 && std::isfinite(p_crit)) ? cdf(p_crit) : 0.0;
+
+                            w_sum += eta;
                         }
-                        double W = w_sum_avg / M;
+
+                        double W = (all_p_gg.empty()) ? 0.0 : w_sum / all_p_gg.size();
+
+
+
                         double w_mean = W;
-                        double w_var = w_sum_sq_avg / M;
-                        double w_std = std::sqrt(w_var);
+                        double w_std = std::sqrt(W * (1.0 - W) / all_p_gg.size()); // Standard error for a proportion
 
                         // w_stats (simplified; skip KS/Chi² to avoid needing full w_vals vector)
                         DataOutput::StatisticalTestResults w_stats;
@@ -1659,7 +1692,8 @@ namespace Simulations {
         for (int i = 0; i < NUM_POINTS; ++i) {
             long double log_ge = log_ge_min + i * log_ge_step;
             long double g_e = std::pow(10.0L, log_ge);
-            long double phi_p_val = FluxCalculations::phi_p(FIXED_G_GAMMA);
+            long double g_n1 = FluxCalculations::g_gamma_n1(g_e);
+            long double phi_p_val = FluxCalculations::phi_p(g_n1);
             long double phi_b_val = FluxCalculations::phi_b(g_e);
             long double phi_c_val = FluxCalculations::phi_c(g_e);
 
