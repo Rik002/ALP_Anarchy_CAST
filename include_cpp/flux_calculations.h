@@ -22,6 +22,10 @@ long double integrated_phi_p(long double g_gamma, long double omega_min = 1.0, l
 long double integrated_phi_b(long double g_e, long double omega_min = 1.0, long double omega_max = 10.0);
 long double integrated_phi_c(long double g_e, long double omega_min = 1.0, long double omega_max = 10.0);
 
+
+
+long double integrate_flux_gsl(long double g_coupling, const std::string& flux_type);
+
 // Corrected oscillated flux calculation (Equation 4.22)
 long double oscillated_flux(long double g_gamma, long double g_e, long double p_gamma_gamma, long double p_e_gamma);
 
